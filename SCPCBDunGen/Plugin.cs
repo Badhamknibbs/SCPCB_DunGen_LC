@@ -71,7 +71,7 @@ namespace SCPCBDunGen
 
             // Config setup
             configSCPRarity = Config.Bind("General", "FoundationRarity", 100, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation.", new AcceptableValueRange<int>(0, 300)));
-            configMoons = Config.Bind("General", "FoundationMoons", "Titan", new ConfigDescription("The moon(s) that the foundation can spawn on, from the given presets.", new AcceptableValueList<string>(MoonConfigs)));
+            configMoons = Config.Bind("General", "FoundationMoons", "titan", new ConfigDescription("The moon(s) that the foundation can spawn on, from the given presets.", new AcceptableValueList<string>(MoonConfigs)));
             configGuaranteedSCP = Config.Bind("General", "FoundationGuaranteed", false, new ConfigDescription("If enabled, the foundation will be effectively guaranteed to spawn. Only recommended for debugging/sightseeing purposes."));
 
             DunGen.Graph.DungeonFlow SCPFlow = SCPCBAssets.LoadAsset<DunGen.Graph.DungeonFlow>("assets/Mods/SCP/data/SCPFlow.asset");
