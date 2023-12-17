@@ -12,8 +12,14 @@ using System.ComponentModel;
 public class SCPDoorMover : NetworkBehaviour
 {
     public AnimatedObjectTrigger animObjectTrigger;
+    public NavMeshObstacle navObstacle;
 
     private float fEnemyDoorMeter = 0.0f;
+
+    private void ToggleDoor(PlayerControllerB player) {
+        animObjectTrigger.TriggerAnimation(player);
+        navObstacle.enabled = !animObjectTrigger.boolValue;
+    }
 
     private void OnTriggerStay(Collider other) {
         if (animObjectTrigger == null || NetworkManager.Singleton == null || !IsServer || animObjectTrigger.boolValue || !other.CompareTag("Enemy")) return; // Anim object boolvalue == isOpen
@@ -24,6 +30,7 @@ public class SCPDoorMover : NetworkBehaviour
             if (fEnemyDoorMeter > 1.0f) {
                 fEnemyDoorMeter = 0.0f;
                 animObjectTrigger.TriggerAnimationNonPlayer(collisionDetect.mainScript.useSecondaryAudiosOnAnimatedObjects, overrideBool: true);
+                navObstacle.enabled = !animObjectTrigger.boolValue;
             }
         }
     }

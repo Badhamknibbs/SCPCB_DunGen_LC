@@ -9,6 +9,7 @@ using System.Linq;
 using System.Reflection;
 using Unity.Netcode;
 using UnityEngine;
+using static LethalLib.Modules.Levels;
 
 namespace SCPCBDunGen
 {
@@ -24,24 +25,23 @@ namespace SCPCBDunGen
 
         public static AssetBundle SCPCBAssets;
 
+        // Configs
+        private ConfigEntry<int> configSCPRarity;
+        private ConfigEntry<string> configMoons;
+        private ConfigEntry<bool> configGuaranteedSCP;
+
+        private string[] MoonConfigs = {
+            "all",
+            "paid",
+            "titan"
+        };
+
         private void Awake() {
             if (Instance == null) {
                 Instance = this;
             }
 
             mls = BepInEx.Logging.Logger.CreateLogSource(PluginInfo.PLUGIN_GUID);
-
-            // Prepare netcode patcher
-            var types = Assembly.GetExecutingAssembly().GetTypes();
-            foreach (var type in types) {
-                var methods = type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
-                foreach (var method in methods) {
-                    var attributes = method.GetCustomAttributes(typeof(RuntimeInitializeOnLoadMethodAttribute), false);
-                    if (attributes.Length > 0) {
-                        method.Invoke(null, null);
-                    }
-                }
-            }
 
             string sAssemblyLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
@@ -69,20 +69,41 @@ namespace SCPCBDunGen
             harmony.PatchAll(typeof(SCPCBDunGen));
             harmony.PatchAll(typeof(RoundManagerPatch));
 
+            // Config setup
+            configSCPRarity = Config.Bind("General", "FoundationRarity", 100, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation.", new AcceptableValueRange<int>(0, 300)));
+            configMoons = Config.Bind("General", "FoundationMoons", "Titan", new ConfigDescription("The moon(s) that the foundation can spawn on, from the given presets.", new AcceptableValueList<string>(MoonConfigs)));
+            configGuaranteedSCP = Config.Bind("General", "FoundationGuaranteed", false, new ConfigDescription("If enabled, the foundation will be effectively guaranteed to spawn. Only recommended for debugging/sightseeing purposes."));
+
             DunGen.Graph.DungeonFlow SCPFlow = SCPCBAssets.LoadAsset<DunGen.Graph.DungeonFlow>("assets/Mods/SCP/data/SCPFlow.asset");
             if (SCPFlow == null) {
-                mls.LogError("Failed to load SCPCB Dungeon Flow.");
+                mls.LogError("Failed to load SCP:CB Dungeon Flow.");
+                return;
+            }
+
+            LevelTypes SCPLevelType = GetLevelTypeFromMoonConfig(configMoons.Value.ToLower()); // Convert to lower just in case the user put in caps characters by accident, for leniency
+            if (SCPLevelType == LevelTypes.None) {
+                mls.LogError("Config file invalid, moon config does not match one of the preset values.");
                 return;
             }
 
             LethalLib.Extras.DungeonDef SCPDungeon = ScriptableObject.CreateInstance<LethalLib.Extras.DungeonDef>();
             SCPDungeon.dungeonFlow = SCPFlow;
-            SCPDungeon.rarity = 99999; // DEBUG guarantee SCP dungeon
+            SCPDungeon.rarity = configGuaranteedSCP.Value ? 99999 : configSCPRarity.Value; // If configGuaranteedSCP is true, set rarity absurdly high (this is equivalent to a 99.996% chance of spawning the foundation)
             SCPDungeon.firstTimeDungeonAudio = SCPCBAssets.LoadAsset<AudioClip>("assets/Mods/SCP/snd/Horror8.ogg");
 
-            LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, LethalLib.Modules.Levels.LevelTypes.All);
+            LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, SCPLevelType);
 
             mls.LogInfo($"SCP:SB DunGen for Lethal Company [Version {PluginInfo.PLUGIN_VERSION}] successfully loaded.");
+        }
+
+        private LevelTypes GetLevelTypeFromMoonConfig(string sConfigName) {
+            // See MoonConfigs
+            switch (sConfigName) {
+                case "all": return LevelTypes.All;
+                case "paid": return (LevelTypes.TitanLevel | LevelTypes.DineLevel | LevelTypes.RendLevel);
+                case "titan": return LevelTypes.TitanLevel;
+                default: return LevelTypes.None;
+            }
         }
 
         // Patch teleport doors (Dummies are used in the room tiles, both for copyright and networked prefab issues)
