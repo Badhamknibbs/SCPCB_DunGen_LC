@@ -7,56 +7,24 @@ using UnityEngine.Networking;
 using GameNetcodeStuff;
 using Unity.Netcode;
 using System.Runtime.CompilerServices;
+using System.ComponentModel;
 
 public class SCPDoorMover : NetworkBehaviour
 {
-    public Animator DoorA;
-    public Animator DoorB;
-    public AudioSource DoorAudio;
-    public AudioClip[] OpenSFX;
-    public AudioClip BargeSFX;
+    public AnimatedObjectTrigger animObjectTrigger;
 
-    [ServerRpc]
-    public void RpcToggleDoorState() {
-        if (DoorA == null || DoorB == null) {
-            Debug.LogError("Door parameters are null.");
-            return;
-        }
-        bool bTargetState = !DoorA.GetBool("IsOpen");
-        DoorA.SetBool("IsOpen", bTargetState);
-        DoorB.SetBool("IsOpen", bTargetState);
-        DoorAudio.PlayOneShot(OpenSFX[UnityEngine.Random.RandomRangeInt(0, OpenSFX.Length)]);
-    }
+    private float fEnemyDoorMeter = 0.0f;
 
     private void OnTriggerStay(Collider other) {
-        if (DoorA.GetBool("IsOpen")) return;
-        EnemyAI enemyAI = other.GetComponentInChildren<EnemyAI>();
-        switch (enemyAI) { // Determine type of enemy, open the door if it's valid, or barge it open if it's a Jester in pursuit
-            case JesterAI jesterAI:
-                if (jesterAI.currentBehaviourStateIndex == 2) JesterBarge();
-                else RpcToggleDoorState();
-                return;
-            case SpringManAI:
-            case FlowermanAI:
-            case NutcrackerEnemyAI:
-            case MaskedPlayerEnemy:
-                Debug.Log("Enemy opened SCP door.");
-                RpcToggleDoorState();
-                return;
-            default: return; // Not an enemy or incompatible enemy
-        }
-    }
+        if (animObjectTrigger == null || NetworkManager.Singleton == null || !IsServer || animObjectTrigger.boolValue || !other.CompareTag("Enemy")) return; // Anim object boolvalue == isOpen
 
-    public void JesterBarge() {
-        if (DoorA == null || DoorB == null) {
-            Debug.LogError("Door parameters are null.");
-            return;
+        EnemyAICollisionDetect collisionDetect = other.GetComponent<EnemyAICollisionDetect>();
+        if (collisionDetect != null) {
+            fEnemyDoorMeter += Time.deltaTime * collisionDetect.mainScript.openDoorSpeedMultiplier;
+            if (fEnemyDoorMeter > 1.0f) {
+                fEnemyDoorMeter = 0.0f;
+                animObjectTrigger.TriggerAnimationNonPlayer(collisionDetect.mainScript.useSecondaryAudiosOnAnimatedObjects, overrideBool: true);
+            }
         }
-        Debug.Log("Jester barged SCP door.");
-        DoorA.SetTrigger("JesterOpen");
-        DoorB.SetTrigger("JesterOpen");
-        DoorA.SetBool("IsOpen", true);
-        DoorB.SetBool("IsOpen", true);
-        DoorAudio.PlayOneShot(BargeSFX);
     }
 }
