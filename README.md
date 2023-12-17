@@ -9,4 +9,6 @@ The SCP: Containment Breach assets were created by Regalis11, and thus the asset
 
 Assets made by DisabledWhales (The Fire Exit door and the vent) are provided with permission under the newer version of the license used by the SCP:CB assets (CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/)
 
+Vent SFX made by rsellick (https://freesound.org/people/rsellick/sounds/545519/)
+
 The code of this mod is provided under the MIT license (see license file)
