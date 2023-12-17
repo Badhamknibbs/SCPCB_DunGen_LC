@@ -6,6 +6,7 @@ The asset package provided is designed to be used in a decompiled version of Let
 
 # Attributions and licenses
 The SCP: Containment Breach assets were created by Regalis11, and thus the assets provided in this repo are under a separate license to the code of this mod (CC BY-SA 3.0, http://creativecommons.org/licenses/by-sa/3.0/)
+
 Assets made by DisabledWhales (The Fire Exit door and the vent) are provided with permission under the newer version of the license used by the SCP:CB assets (CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/)
 
 The code of this mod is provided under the MIT license (see license file)
