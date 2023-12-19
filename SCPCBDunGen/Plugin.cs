@@ -13,11 +13,15 @@ using static LethalLib.Modules.Levels;
 
 namespace SCPCBDunGen
 {
-    [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
+    [BepInPlugin(modGUID, modName, modVersion)]
     [BepInDependency(LethalLib.Plugin.ModGUID)]
     public class SCPCBDunGen : BaseUnityPlugin
     {
-        private readonly Harmony harmony = new Harmony(PluginInfo.PLUGIN_GUID);
+        private const string modGUID = "SCPCBDunGen";
+        private const string modName = "SCPCBDunGen";
+        private const string modVersion = "1.2.0";
+
+        private readonly Harmony harmony = new Harmony(modGUID);
 
         private static SCPCBDunGen Instance;
 
@@ -41,7 +45,7 @@ namespace SCPCBDunGen
                 Instance = this;
             }
 
-            mls = BepInEx.Logging.Logger.CreateLogSource(PluginInfo.PLUGIN_GUID);
+            mls = BepInEx.Logging.Logger.CreateLogSource(modGUID);
 
             string sAssemblyLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
@@ -56,15 +60,9 @@ namespace SCPCBDunGen
                 mls.LogError("Failed to load SCP Door.");
                 return;
             }
-            GameObject SCPVent = SCPCBAssets.LoadAsset<GameObject>("assets/Mods/SCP/prefabs/SCPVent.prefab");
-            if (SCPVent == null) {
-                mls.LogError("Failed to load SCP vent.");
-                return;
-            }
 
             // Register network prefabs
             LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCPDoor);
-            LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCPVent);
 
             harmony.PatchAll(typeof(SCPCBDunGen));
             harmony.PatchAll(typeof(RoundManagerPatch));
@@ -93,22 +91,23 @@ namespace SCPCBDunGen
 
             LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, SCPLevelType);
 
-            mls.LogInfo($"SCP:SB DunGen for Lethal Company [Version {PluginInfo.PLUGIN_VERSION}] successfully loaded.");
+            mls.LogInfo($"SCP:SB DunGen for Lethal Company [Version {modVersion}] successfully loaded.");
         }
 
         private LevelTypes GetLevelTypeFromMoonConfig(string sConfigName) {
             // See MoonConfigs
             switch (sConfigName) {
-                case "all": return LevelTypes.All;
+                case "all": return (LevelTypes.All & ~(LevelTypes.MarchLevel)); // March with 3 exits is not supported
                 case "paid": return (LevelTypes.TitanLevel | LevelTypes.DineLevel | LevelTypes.RendLevel);
                 case "titan": return LevelTypes.TitanLevel;
                 default: return LevelTypes.None;
             }
         }
 
-        // Patch teleport doors (Dummies are used in the room tiles, both for copyright and networked prefab issues)
+        // Patch teleport doors/vents (Dummies are used in the room tiles, so we can reuse assets already in the game)
         [HarmonyPatch(typeof(RoundManager))]
-        internal class RoundManagerPatch {
+        internal class RoundManagerPatch
+        {
             [HarmonyPatch("GenerateNewFloor")]
             [HarmonyPostfix]
             static void FixTeleportDoors() {
@@ -117,6 +116,7 @@ namespace SCPCBDunGen
                 NetworkManager networkManager = FindObjectOfType<NetworkManager>();
                 bool bFoundEntranceA = false;
                 bool bFoundEntranceB = false;
+                int iVentsFound = 0;
                 foreach (SpawnSyncedObject syncedObject in SyncedObjects) {
                     if (syncedObject.spawnPrefab.name == "EntranceTeleportA_EMPTY") {
                         NetworkPrefab networkPrefab = networkManager.NetworkConfig.Prefabs.m_Prefabs.First(x => x.Prefab.name == "EntranceTeleportA");
@@ -136,12 +136,24 @@ namespace SCPCBDunGen
                         Instance.mls.LogInfo("Found and replaced EntranceTeleportB prefab.");
                         bFoundEntranceB = true;
                         syncedObject.spawnPrefab = networkPrefab.Prefab;
+                    } else if (syncedObject.spawnPrefab.name == "VentDummy") {
+                        NetworkPrefab networkPrefab = networkManager.NetworkConfig.Prefabs.m_Prefabs.First(x => x.Prefab.name == "VentEntrance");
+                        if (networkPrefab == null) {
+                            Instance.mls.LogError("Failed to find VentEntrance prefab.");
+                            return;
+                        }
+                        Instance.mls.LogInfo("Found and replaced VentEntrance prefab.");
+                        iVentsFound++;
+                        syncedObject.spawnPrefab = networkPrefab.Prefab;
                     }
                 }
                 if (!bFoundEntranceA && !bFoundEntranceB) {
                     Instance.mls.LogError("Failed to find entrance teleporters to replace.");
                     return;
                 }
+                if (iVentsFound == 0) {
+                    Instance.mls.LogError("No vents found to replace.");
+                } else Instance.mls.LogInfo($"{iVentsFound} vents found and replaced with network prefab.");
             }
         }
     }
