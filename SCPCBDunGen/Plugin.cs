@@ -19,7 +19,7 @@ namespace SCPCBDunGen
     {
         private const string modGUID = "SCPCBDunGen";
         private const string modName = "SCPCBDunGen";
-        private const string modVersion = "1.2.0";
+        private const string modVersion = "1.3.0";
 
         private readonly Harmony harmony = new Harmony(modGUID);
 
@@ -110,7 +110,8 @@ namespace SCPCBDunGen
         {
             [HarmonyPatch("GenerateNewFloor")]
             [HarmonyPostfix]
-            static void FixTeleportDoors() {
+            static void FixTeleportDoors(ref RuntimeDungeon ___dungeonGenerator) {
+                if (___dungeonGenerator.Generator.DungeonFlow.name != "SCPFlow") return; // Do nothing to non-SCP dungeons
                 Instance.mls.LogInfo("Attempting to fix entrance teleporters.");
                 SpawnSyncedObject[] SyncedObjects = FindObjectsOfType<SpawnSyncedObject>();
                 NetworkManager networkManager = FindObjectOfType<NetworkManager>();
@@ -154,6 +155,34 @@ namespace SCPCBDunGen
                 if (iVentsFound == 0) {
                     Instance.mls.LogError("No vents found to replace.");
                 } else Instance.mls.LogInfo($"{iVentsFound} vents found and replaced with network prefab.");
+            }
+
+            [HarmonyPatch("SpawnScrapInLevel")]
+            [HarmonyPrefix]
+            private static bool SetItemSpawnPoints(ref SelectableLevel ___currentLevel, ref RuntimeDungeon ___dungeonGenerator) {
+                if (___dungeonGenerator.Generator.DungeonFlow.name != "SCPFlow") return true; // Do nothing to non-SCP dungeons
+                // Grab the general and tabletop item groups from the bottle bin (a common item across all 8 moons right now)
+                SpawnableItemWithRarity bottleItem = ___currentLevel.spawnableScrap.Find(x => x.spawnableItem.itemName == "Bottles");
+                if (bottleItem == null) {
+                    Instance.mls.LogError("Failed to find bottle bin item for reference snatching; is this a custom moon without the bottle bin item?");
+                    return true;
+                }
+                // Grab the small item group from the fancy glass (only appears on paid moons, so this one is optional and replaced with tabletop items if invalid)
+                SpawnableItemWithRarity fancyGlassItem = ___currentLevel.spawnableScrap.Find(x => x.spawnableItem.itemName == "Golden cup");
+
+                // Grab the item groups
+                ItemGroup itemGroupGeneral = bottleItem.spawnableItem.spawnPositionTypes.Find(x => x.name == "GeneralItemClass");
+                ItemGroup itemGroupTabletop = bottleItem.spawnableItem.spawnPositionTypes.Find(x => x.name == "TabletopItems");
+                ItemGroup itemGroupSmall = (fancyGlassItem == null) ? itemGroupTabletop : fancyGlassItem.spawnableItem.spawnPositionTypes.Find(x => x.name == "SmallItems"); // Use tabletop items in place of small items if not on a paid moon
+                RandomScrapSpawn[] scrapSpawns = FindObjectsOfType<RandomScrapSpawn>();
+                foreach (RandomScrapSpawn scrapSpawn in scrapSpawns) {
+                    switch (scrapSpawn.spawnableItems.name) {
+                        case "GeneralItemClassDUMMY": scrapSpawn.spawnableItems = itemGroupGeneral; break;
+                        case "TabletopItemsDUMMY": scrapSpawn.spawnableItems = itemGroupTabletop; break;
+                        case "SmallItemsDUMMY": scrapSpawn.spawnableItems = itemGroupSmall; break;
+                    }
+                }
+                return true;
             }
         }
     }
