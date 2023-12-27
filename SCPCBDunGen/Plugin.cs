@@ -115,6 +115,11 @@ namespace SCPCBDunGen
                 Instance.mls.LogInfo("Attempting to fix entrance teleporters.");
                 SpawnSyncedObject[] SyncedObjects = FindObjectsOfType<SpawnSyncedObject>();
                 NetworkManager networkManager = FindObjectOfType<NetworkManager>();
+                NetworkPrefab networkVentPrefab = networkManager.NetworkConfig.Prefabs.m_Prefabs.First(x => x.Prefab.name == "VentEntrance");
+                if (networkVentPrefab == null) {
+                    Instance.mls.LogError("Failed to find VentEntrance prefab.");
+                    return;
+                }
                 bool bFoundEntranceA = false;
                 bool bFoundEntranceB = false;
                 int iVentsFound = 0;
@@ -138,14 +143,9 @@ namespace SCPCBDunGen
                         bFoundEntranceB = true;
                         syncedObject.spawnPrefab = networkPrefab.Prefab;
                     } else if (syncedObject.spawnPrefab.name == "VentDummy") {
-                        NetworkPrefab networkPrefab = networkManager.NetworkConfig.Prefabs.m_Prefabs.First(x => x.Prefab.name == "VentEntrance");
-                        if (networkPrefab == null) {
-                            Instance.mls.LogError("Failed to find VentEntrance prefab.");
-                            return;
-                        }
                         Instance.mls.LogInfo("Found and replaced VentEntrance prefab.");
                         iVentsFound++;
-                        syncedObject.spawnPrefab = networkPrefab.Prefab;
+                        syncedObject.spawnPrefab = networkVentPrefab.Prefab;
                     }
                 }
                 if (!bFoundEntranceA && !bFoundEntranceB) {
