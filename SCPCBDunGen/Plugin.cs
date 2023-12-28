@@ -19,7 +19,7 @@ namespace SCPCBDunGen
     {
         private const string modGUID = "SCPCBDunGen";
         private const string modName = "SCPCBDunGen";
-        private const string modVersion = "1.3.0";
+        private const string modVersion = "1.3.1";
 
         private readonly Harmony harmony = new Harmony(modGUID);
 
@@ -78,11 +78,13 @@ namespace SCPCBDunGen
                 return;
             }
 
-            LevelTypes SCPLevelType = GetLevelTypeFromMoonConfig(configMoons.Value.ToLower()); // Convert to lower just in case the user put in caps characters by accident, for leniency
+            string sMoonType = configMoons.Value.ToLower(); // Convert to lower just in case the user put in caps characters by accident, for leniency
+            LevelTypes SCPLevelType = GetLevelTypeFromMoonConfig(sMoonType);
             if (SCPLevelType == LevelTypes.None) {
                 mls.LogError("Config file invalid, moon config does not match one of the preset values.");
                 return;
             }
+            mls.LogInfo($"Moon type string \"{sMoonType}\" got type(s) {SCPLevelType}");
 
             LethalLib.Extras.DungeonDef SCPDungeon = ScriptableObject.CreateInstance<LethalLib.Extras.DungeonDef>();
             SCPDungeon.dungeonFlow = SCPFlow;
@@ -97,7 +99,7 @@ namespace SCPCBDunGen
         private LevelTypes GetLevelTypeFromMoonConfig(string sConfigName) {
             // See MoonConfigs
             switch (sConfigName) {
-                case "all": return (LevelTypes.All & ~(LevelTypes.MarchLevel)); // March with 3 exits is not supported
+                case "all": return (LevelTypes.ExperimentationLevel | LevelTypes.AssuranceLevel | LevelTypes.VowLevel | LevelTypes.OffenseLevel | LevelTypes.RendLevel | LevelTypes.DineLevel | LevelTypes.TitanLevel); // March with 3 exits is not supported
                 case "paid": return (LevelTypes.TitanLevel | LevelTypes.DineLevel | LevelTypes.RendLevel);
                 case "titan": return LevelTypes.TitanLevel;
                 default: return LevelTypes.None;
