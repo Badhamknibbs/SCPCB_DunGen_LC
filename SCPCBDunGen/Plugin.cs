@@ -9,7 +9,6 @@ using System.Linq;
 using System.Reflection;
 using Unity.Netcode;
 using UnityEngine;
-using static LethalLib.Modules.Levels;
 
 namespace SCPCBDunGen
 {
@@ -19,7 +18,7 @@ namespace SCPCBDunGen
     {
         private const string modGUID = "SCPCBDunGen";
         private const string modName = "SCPCBDunGen";
-        private const string modVersion = "1.3.1";
+        private const string modVersion = "1.4.0";
 
         private readonly Harmony harmony = new Harmony(modGUID);
 
@@ -31,14 +30,10 @@ namespace SCPCBDunGen
 
         // Configs
         private ConfigEntry<int> configSCPRarity;
+        private ConfigEntry<string> configMoonsOld;
         private ConfigEntry<string> configMoons;
         private ConfigEntry<bool> configGuaranteedSCP;
-
-        private string[] MoonConfigs = {
-            "all",
-            "paid",
-            "titan"
-        };
+        private ConfigEntry<int> configLengthOverride;
 
         private void Awake() {
             if (Instance == null) {
@@ -67,43 +62,43 @@ namespace SCPCBDunGen
             harmony.PatchAll(typeof(SCPCBDunGen));
             harmony.PatchAll(typeof(RoundManagerPatch));
 
-            // Config setup
-            configSCPRarity = Config.Bind("General", "FoundationRarity", 100, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation.", new AcceptableValueRange<int>(0, 300)));
-            configMoons = Config.Bind("General", "FoundationMoons", "titan", new ConfigDescription("The moon(s) that the foundation can spawn on, from the given presets.", new AcceptableValueList<string>(MoonConfigs)));
-            configGuaranteedSCP = Config.Bind("General", "FoundationGuaranteed", false, new ConfigDescription("If enabled, the foundation will be effectively guaranteed to spawn. Only recommended for debugging/sightseeing purposes."));
-
             DunGen.Graph.DungeonFlow SCPFlow = SCPCBAssets.LoadAsset<DunGen.Graph.DungeonFlow>("assets/Mods/SCP/data/SCPFlow.asset");
             if (SCPFlow == null) {
                 mls.LogError("Failed to load SCP:CB Dungeon Flow.");
                 return;
             }
 
-            string sMoonType = configMoons.Value.ToLower(); // Convert to lower just in case the user put in caps characters by accident, for leniency
-            LevelTypes SCPLevelType = GetLevelTypeFromMoonConfig(sMoonType);
-            if (SCPLevelType == LevelTypes.None) {
-                mls.LogError("Config file invalid, moon config does not match one of the preset values.");
-                return;
+            // Config setup
+            configSCPRarity = Config.Bind("General", "FoundationRarity", 100, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation.", new AcceptableValueRange<int>(0, 300)));
+            configMoonsOld = Config.Bind("General", "FoundationMoons", "NULL", new ConfigDescription("OLD CONFIG SETTING, HAS NO EFFECT. Only here to clear the legacy config from updating."));
+            configMoons = Config.Bind("General", "FoundationMoonsList", "TitanLevel", new ConfigDescription("The moon(s) that the foundation can spawn on, in the form of a comma separated list of selectable level names (e.g. \"TitanLevel,RendLevel,DineLevel\")\nNOTE: These must be the internal data names of the levels (all vanilla moons are \"MoonnameLevel\", for modded moon support you will have to find their name if it doesn't follow the convention).\nUse \"all\" to generate in all moons (including modded and unsupported moons). May cause problems if fire exit count on a moon is > 1.\nDungeon generation size is balanced around the dungeon scale multiplier of Titan (2.35), moons with significantly different dungeon size multipliers (see Lethal Company wiki for values) may result in dungeons that are extremely small/large."));
+            configGuaranteedSCP = Config.Bind("General", "FoundationGuaranteed", false, new ConfigDescription("If enabled, the foundation will be effectively guaranteed to spawn. Only recommended for debugging/sightseeing purposes."));
+            configLengthOverride = Config.Bind("General", "FoundationLengthOverride", -1, new ConfigDescription($"If not -1, overrides the foundation length to whatever you'd like. Adjusts how long/large the dungeon generates.\nBe *EXTREMELY* careful not to set this too high (anything too big on a moon with a high dungeon size multipier can cause catastrophic problems, like crashing your computer or worse)\nFor reference, the default value for the current version [{modVersion}] is {SCPFlow.Length.Min}, balanced around the multiplier for Titan (2.35). See the wiki for multipliers for customization."));
+
+            if (configMoonsOld.Value != "NULL") {
+                mls.LogWarning("Old config parameters detected; config has changed since 1.3.1, check the config and set FoundationMoons to NULL to suppress this warning (and change FoundationMoonsList if you want)");
             }
-            mls.LogInfo($"Moon type string \"{sMoonType}\" got type(s) {SCPLevelType}");
+            if (configLengthOverride.Value != -1) {
+                mls.LogInfo($"Foundation length override has been set to {configLengthOverride.Value}. Be careful with this value.");
+                SCPFlow.Length.Min = configLengthOverride.Value;
+                SCPFlow.Length.Max = configLengthOverride.Value;
+            }
 
             LethalLib.Extras.DungeonDef SCPDungeon = ScriptableObject.CreateInstance<LethalLib.Extras.DungeonDef>();
             SCPDungeon.dungeonFlow = SCPFlow;
             SCPDungeon.rarity = configGuaranteedSCP.Value ? 99999 : configSCPRarity.Value; // If configGuaranteedSCP is true, set rarity absurdly high (this is equivalent to a 99.996% chance of spawning the foundation)
             SCPDungeon.firstTimeDungeonAudio = SCPCBAssets.LoadAsset<AudioClip>("assets/Mods/SCP/snd/Horror8.ogg");
 
-            LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, SCPLevelType);
-
-            mls.LogInfo($"SCP:SB DunGen for Lethal Company [Version {modVersion}] successfully loaded.");
-        }
-
-        private LevelTypes GetLevelTypeFromMoonConfig(string sConfigName) {
-            // See MoonConfigs
-            switch (sConfigName) {
-                case "all": return (LevelTypes.ExperimentationLevel | LevelTypes.AssuranceLevel | LevelTypes.VowLevel | LevelTypes.OffenseLevel | LevelTypes.RendLevel | LevelTypes.DineLevel | LevelTypes.TitanLevel); // March with 3 exits is not supported
-                case "paid": return (LevelTypes.TitanLevel | LevelTypes.DineLevel | LevelTypes.RendLevel);
-                case "titan": return LevelTypes.TitanLevel;
-                default: return LevelTypes.None;
+            if (configMoons.Value == "all") {
+                LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, LethalLib.Modules.Levels.LevelTypes.All);
+                mls.LogInfo("Registered SCP dungeon for all moons. Compatability not guaranteed!");
+            } else {
+                string[] arMoonNames = configMoons.Value.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                LethalLib.Modules.Dungeon.AddDungeon(SCPDungeon, LethalLib.Modules.Levels.LevelTypes.None, arMoonNames);
+                mls.LogInfo($"Registered SCP dungeon for the following moons: {configMoons.Value}");
             }
+
+            mls.LogInfo($"SCP:CB DunGen for Lethal Company [Version {modVersion}] successfully loaded.");
         }
 
         // Patch teleport doors/vents (Dummies are used in the room tiles, so we can reuse assets already in the game)
@@ -150,15 +145,13 @@ namespace SCPCBDunGen
                         syncedObject.spawnPrefab = networkVentPrefab.Prefab;
                     }
                 }
-                if (!bFoundEntranceA && !bFoundEntranceB) {
-                    Instance.mls.LogError("Failed to find entrance teleporters to replace.");
-                    return;
-                }
-                if (iVentsFound == 0) {
-                    Instance.mls.LogError("No vents found to replace.");
-                } else Instance.mls.LogInfo($"{iVentsFound} vents found and replaced with network prefab.");
+                if (!bFoundEntranceA) Instance.mls.LogError("Failed to find entrance teleporter for main entrance to replace.");
+                if (!bFoundEntranceB) Instance.mls.LogError("Failed to find entrance teleporter for fire exit to replace.");
+                if (iVentsFound == 0) Instance.mls.LogError("No vents found to replace.");
+                else Instance.mls.LogInfo($"{iVentsFound} vents found and replaced with network prefab.");
             }
 
+            // Find and replace the dummy scrap items with the ones already in LE (for some reason it compares the hash of the item directly, not any actual data in it)
             [HarmonyPatch("SpawnScrapInLevel")]
             [HarmonyPrefix]
             private static bool SetItemSpawnPoints(ref SelectableLevel ___currentLevel, ref RuntimeDungeon ___dungeonGenerator) {
@@ -172,6 +165,10 @@ namespace SCPCBDunGen
                 // Grab the small item group from the fancy glass (only appears on paid moons, so this one is optional and replaced with tabletop items if invalid)
                 SpawnableItemWithRarity fancyGlassItem = ___currentLevel.spawnableScrap.Find(x => x.spawnableItem.itemName == "Golden cup");
 
+                int iGeneralScrapCount = 0;
+                int iTabletopScrapCount = 0;
+                int iSmallScrapCount = 0;
+
                 // Grab the item groups
                 ItemGroup itemGroupGeneral = bottleItem.spawnableItem.spawnPositionTypes.Find(x => x.name == "GeneralItemClass");
                 ItemGroup itemGroupTabletop = bottleItem.spawnableItem.spawnPositionTypes.Find(x => x.name == "TabletopItems");
@@ -179,11 +176,24 @@ namespace SCPCBDunGen
                 RandomScrapSpawn[] scrapSpawns = FindObjectsOfType<RandomScrapSpawn>();
                 foreach (RandomScrapSpawn scrapSpawn in scrapSpawns) {
                     switch (scrapSpawn.spawnableItems.name) {
-                        case "GeneralItemClassDUMMY": scrapSpawn.spawnableItems = itemGroupGeneral; break;
-                        case "TabletopItemsDUMMY": scrapSpawn.spawnableItems = itemGroupTabletop; break;
-                        case "SmallItemsDUMMY": scrapSpawn.spawnableItems = itemGroupSmall; break;
+                        case "GeneralItemClassDUMMY":
+                            scrapSpawn.spawnableItems = itemGroupGeneral;
+                            iGeneralScrapCount++;
+                            break;
+                        case "TabletopItemsDUMMY":
+                            scrapSpawn.spawnableItems = itemGroupTabletop;
+                            iTabletopScrapCount++;
+                            break;
+                        case "SmallItemsDUMMY":
+                            scrapSpawn.spawnableItems = itemGroupSmall;
+                            iSmallScrapCount++;
+                            break;
                     }
                 }
+
+                Instance.mls.LogInfo($"Totals for scrap replacement: General: {iGeneralScrapCount}, Tabletop: {iTabletopScrapCount}, Small: {iSmallScrapCount}");
+                if ((iGeneralScrapCount + iTabletopScrapCount + iSmallScrapCount) < 10) Instance.mls.LogWarning("Unusually low scrap spawn count; scrap may be sparse.");
+
                 return true;
             }
         }
