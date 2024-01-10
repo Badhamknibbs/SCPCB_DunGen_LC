@@ -72,7 +72,7 @@ namespace SCPCBDunGen
             //}
 
             // Register network prefabs
-            LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCPDoor);
+            //LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCPDoor);
             //LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCP914Controls);
 
             DunGen.Graph.DungeonFlow SCPFlow = SCPCBAssets.LoadAsset<DunGen.Graph.DungeonFlow>("assets/Mods/SCP/data/SCPFlow.asset");
