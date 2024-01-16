@@ -21,9 +21,9 @@ namespace SCPCBDunGen
     {
         private readonly Harmony harmony = new Harmony(PluginInfo.PLUGIN_GUID);
 
-        private static SCPCBDunGen Instance;
+        public static SCPCBDunGen Instance;
 
-        internal ManualLogSource mls;
+        public ManualLogSource mls;
 
         public static AssetBundle SCPCBAssets;
 
@@ -59,21 +59,6 @@ namespace SCPCBDunGen
                 mls.LogError("Failed to load SCPCB Dungeon assets.");
                 return;
             }
-
-            GameObject SCPDoor = SCPCBAssets.LoadAsset<GameObject>("assets/Mods/SCP/prefabs/SCPDoorBtn.prefab");
-            if (SCPDoor == null) {
-                mls.LogError("Failed to load SCP Door.");
-                return;
-            }
-            //GameObject SCP914Controls = SCPCBAssets.LoadAsset<GameObject>("assets/Mods/SCP/prefabs/914_Controls.prefab");
-            //if (SCP914Controls == null) {
-            //    mls.LogError("Failed to load SCP 914 controls.");
-            //    return;
-            //}
-
-            // Register network prefabs
-            //LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCPDoor);
-            //LethalLib.Modules.NetworkPrefabs.RegisterNetworkPrefab(SCP914Controls);
 
             DunGen.Graph.DungeonFlow SCPFlow = SCPCBAssets.LoadAsset<DunGen.Graph.DungeonFlow>("assets/Mods/SCP/data/SCPFlow.asset");
             if (SCPFlow == null) {
@@ -114,14 +99,14 @@ namespace SCPCBDunGen
                 extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Lethal Company", iRarity));
                 mls.LogInfo("Registered SCP dungeon for all vanilla moons.");
             } else if (sMoonConfig == "modded") {
-                extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Custom", iRarity));
+                extendedDungeon.dynamicLevelTagsList.Add(new StringWithRarity("Custom", iRarity));
                 mls.LogInfo("Registered SCP dungeon for all modded moons.");
             } else if (sMoonConfig == "paid") {
                 extendedDungeon.dynamicRoutePricesList.Add(new Vector2WithRarity(new Vector2(1, 9999), iRarity));
                 mls.LogInfo("Registered SCP dungeon for all paid moons.");
             } else if (sMoonConfig == "free") {
                 extendedDungeon.dynamicRoutePricesList.Add(new Vector2WithRarity(new Vector2(0, 0), iRarity));
-                mls.LogInfo("Registered SCP dungeon for all paid moons.");
+                mls.LogInfo("Registered SCP dungeon for all free moons.");
             } else {
                 string[] arMoonNames = configMoons.Value.Split(',', StringSplitOptions.RemoveEmptyEntries);
                 StringWithRarity[] arMoonNamesRarity = new StringWithRarity[arMoonNames.Length];
@@ -141,7 +126,6 @@ namespace SCPCBDunGen
             mls.LogInfo($"SCP:CB DunGen for Lethal Company [Version {PluginInfo.PLUGIN_VERSION}] successfully loaded.");
         }
 
-        // Patch teleport doors/vents (Dummies are used in the room tiles, so we can reuse assets already in the game)
         [HarmonyPatch(typeof(RoundManager))]
         internal class RoundManagerPatch
         {
@@ -192,8 +176,8 @@ namespace SCPCBDunGen
             }
 
             // Add conversions for a specified item to possible results
-            // Use "*" to destroy an item, or the same item name to do no conversion
-            private static void AddConversions(SCP914Converter SCP914, List<Item> lItems, string sItem, string[] arROUGH, string[] arCOARSE, string[] arONETOONE, string[] arFINE, string[] arVERYFINE) {
+            // Use "*" to destroy an item, or "@" to do no conversion (same item as input)
+            public static void AddConversions(SCP914Converter SCP914, List<Item> lItems, string sItem, string[] arROUGH, string[] arCOARSE, string[] arONETOONE, string[] arFINE, string[] arVERYFINE) {
 
                 // Array to reference arrays via type index
                 string[][] arSettingToItems = [arROUGH, arCOARSE, arONETOONE, arFINE, arVERYFINE];
@@ -203,10 +187,10 @@ namespace SCPCBDunGen
                     List<Item> lConvertItems = new List<Item>(); // Create a list of all items we want to add conversions for
                     foreach (string sItemName in arSettingToItems[(int)scp914Setting]) {
                         if (sItemName == "*") lConvertItems.Add(null);
-                        else if (sItemName == itemConvert.itemName) lConvertItems.Add(itemConvert);
+                        else if (sItemName == "@") lConvertItems.Add(itemConvert);
                         else lConvertItems.Add(lItems.Find(x => x.itemName.ToLower() == sItemName)); // OK to be null
                     }
-                    SCP914.AddConversion(scp914Setting, itemConvert, lConvertItems.ToArray()); // Convert to array then add to conversion dictionary
+                    SCP914.AddConversion(scp914Setting, itemConvert, lConvertItems); // Add to conversion dictionary
                 }
             }
 
@@ -228,19 +212,34 @@ namespace SCPCBDunGen
                 List<Item> lItems = StartOfRound.allItemsList.itemsList;
 
                 // Default conversions
-                AddConversions(SCP914, lItems, "walkie-talkie", ["*"], ["walkie-talkie"], ["walkie-talkie", "old phone"], ["walkie-talkie"], ["boombox"]);
-                AddConversions(SCP914, lItems, "shovel", ["*"], ["*"], ["shovel"], ["stop sign", "yield sign"], ["*"]);
-                AddConversions(SCP914, lItems, "flashlight", ["*"], ["laser pointer", "flashlight"], ["flashlight"], ["pro-flashlight", "flashlight"], ["*", "fancy lamp", "stun grenade"]);
-                AddConversions(SCP914, lItems, "pro-flashlight", ["laser pointer"], ["flashlight", "pro-flashlight"], ["pro-flashlight"], ["stun grenade", "fancy lamp", "*"], ["*", "fancy lamp"]);
-                AddConversions(SCP914, lItems, "key", ["*"], ["*"], ["key"], ["lockpicker"], ["*"]);
-                AddConversions(SCP914, lItems, "homemade flashbang", ["*"], ["*"], ["homemade flashbang"], ["stun grenade"], ["stun grenade"]);
-                AddConversions(SCP914, lItems, "tragedy", ["*"], ["comedy", "tragedy"], ["comedy"], ["comedy", "tragedy"], ["*"]);
-                AddConversions(SCP914, lItems, "comedy", ["*"], ["comedy", "tragedy"], ["tragedy"], ["comedy", "tragedy"], ["*"]);
-                AddConversions(SCP914, lItems, "toy robot", ["metal sheet"], ["v-type engine"], ["toy robot"], ["*"], ["*"]);
-                AddConversions(SCP914, lItems, "v-type engine", ["metal sheet"], ["big bolt", "large axle"], ["v-type engine"], ["lockpicker", "toy robot"], ["toy robot", "toy robot", "*"]);
-                AddConversions(SCP914, lItems, "large axle", ["metal sheet"], ["big bolt"], ["large axle"], ["v-type engine", "lockpicker"], ["lockpicker", "lockpicker", "toy robot", "*"]);
-                AddConversions(SCP914, lItems, "big bolt", ["*"], ["metal sheet"], ["big bolt"], ["large axle"], ["v-type engine", "lockpicker"]);
-                AddConversions(SCP914, lItems, "metal sheet", ["*"], ["*"], ["metal sheet"], ["big bolt"], ["large axle", "lockpicker"]);
+                AddConversions(SCP914, lItems, "walkie-talkie", ["*"], ["@"], ["@", "old phone"], ["@", "boombox"], ["boombox"]);
+                AddConversions(SCP914, lItems, "old phone", ["*"], ["@"], ["walkie-talkie", "@"], ["@", "boombox"], ["boombox"]);
+                AddConversions(SCP914, lItems, "shovel", ["*"], ["*"], ["@"], ["stop sign", "yield sign"], ["*"]);
+                AddConversions(SCP914, lItems, "laser pointer", ["*"], ["*"], ["@"], ["flashlight", "@"], ["*", "homemade flashbang", "flashlight"]);
+                AddConversions(SCP914, lItems, "flashlight", ["*"], ["laser pointer", "@"], ["@"], ["pro-flashlight", "@"], ["*", "fancy lamp", "stun grenade"]);
+                AddConversions(SCP914, lItems, "pro-flashlight", ["laser pointer"], ["flashlight", "@"], ["@"], ["stun grenade", "fancy lamp", "*"], ["*", "fancy lamp"]);
+                AddConversions(SCP914, lItems, "key", ["*"], ["*"], ["@"], ["lockpicker"], ["lockpicker"]);
+                AddConversions(SCP914, lItems, "homemade flashbang", ["*"], ["*"], ["@"], ["stun grenade"], ["stun grenade"]);
+                AddConversions(SCP914, lItems, "tragedy", ["*"], ["comedy", "@"], ["comedy"], ["comedy", "@"], ["@"]);   // TODO spawn mimic on VF
+                AddConversions(SCP914, lItems, "comedy", ["*"], ["@", "tragedy"], ["tragedy"], ["@", "tragedy"], ["@"]); // Ditto
+                AddConversions(SCP914, lItems, "toy robot", ["metal sheet"], ["v-type engine"], ["@"], ["@"], ["@"]);
+                AddConversions(SCP914, lItems, "v-type engine", ["metal sheet"], ["big bolt", "large axle"], ["@"], ["lockpicker", "toy robot"], ["toy robot", "toy robot", "*", "jetpack"]);
+                AddConversions(SCP914, lItems, "large axle", ["metal sheet"], ["big bolt"], ["@"], ["v-type engine", "lockpicker"], ["lockpicker", "lockpicker", "toy robot", "*"]);
+                AddConversions(SCP914, lItems, "big bolt", ["*"], ["metal sheet"], ["@"], ["large axle"], ["v-type engine", "lockpicker"]);
+                AddConversions(SCP914, lItems, "metal sheet", ["*"], ["*"], ["@"], ["big bolt"], ["large axle", "lockpicker"]);
+                AddConversions(SCP914, lItems, "airhorn", ["*"], ["clown horn"], ["@", "clown horn"], ["@", "bell"], ["bell"]);
+                AddConversions(SCP914, lItems, "clown horn", ["*"], ["*"], ["airhorn", "@"], ["airhorn"], ["bell"]);
+                AddConversions(SCP914, lItems, "bell", ["clown horn"], ["airhorn"], ["@"], ["@"], ["@"]);
+                AddConversions(SCP914, lItems, "candy", ["*"], ["*"], ["@"], ["toothpaste"], ["toothpaste"]);
+                AddConversions(SCP914, lItems, "teeth", ["candy"], ["toothpaste"], ["@"], ["teeth"], ["teeth"]);
+                AddConversions(SCP914, lItems, "toothpaste", ["*"], ["candy"], ["@"], ["teeth"], ["teeth"]);
+                AddConversions(SCP914, lItems, "pill bottle", ["*"], ["*"], ["@"], ["perfume bottle", "chemical jug"], ["chemical jug"]);
+                AddConversions(SCP914, lItems, "perfume bottle", ["*"], ["pill bottle"], ["@"], ["chemical jug"], ["hair dryer", "brush"]);
+                AddConversions(SCP914, lItems, "brush", ["*"], ["pill bottle"], ["@"], ["hair dryer"], ["hair dryer"]);
+                AddConversions(SCP914, lItems, "chemical jug", ["red soda"], ["perfume bottle", "pill bottle"], ["@"], ["jar of pickles"], ["jar of pickles"]);
+                AddConversions(SCP914, lItems, "red soda", ["*"], ["*", "pill bottle"], ["@"], ["jar of pickles"], ["chemical jug", "golden cup"]);
+                AddConversions(SCP914, lItems, "golden cup", ["dust pan", "flask"], ["mug", "pill bottle", "red soda"], ["@"], ["magnifying glass"], ["magnifying glass"]);
+                AddConversions(SCP914, lItems, "flask", ["*"], ["mug", "pill bottle", "red soda"], ["@"], ["magnifying glass"], ["golden cup"]);
                 return;
             }
         }

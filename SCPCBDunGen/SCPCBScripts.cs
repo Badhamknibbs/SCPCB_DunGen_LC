@@ -9,6 +9,9 @@ using Unity.Netcode;
 using System.Runtime.CompilerServices;
 using System.ComponentModel;
 using System.Collections;
+using System.Linq;
+using SCPCBDunGen;
+using System.Reflection;
 
 public class SCPDoorMover : NetworkBehaviour
 {
@@ -17,7 +20,7 @@ public class SCPDoorMover : NetworkBehaviour
 
     private float fEnemyDoorMeter = 0.0f;
 
-    private void ToggleDoor(PlayerControllerB player) {
+    public void ToggleDoor(PlayerControllerB player) {
         animObjectTrigger.TriggerAnimation(player);
         navObstacle.enabled = !animObjectTrigger.boolValue;
     }
@@ -45,8 +48,6 @@ public class SCP914InputStore : NetworkBehaviour
         if (!NetworkManager.IsServer) return;
         Debug.Log($"SCPCB New thing entered input trigger: {other.gameObject.name}.");
         GrabbableObject grabbable = other.GetComponent<GrabbableObject>();
-        if (grabbable == null) return;
-        Debug.Log("SCPCB Thing was Grabbable.");
         lContainedItems.Add(other.gameObject);
     }
 
@@ -93,26 +94,39 @@ public class SCP914Converter : NetworkBehaviour
         (SCP914Setting.VERYFINE, -90)
     ];
 
-    private Dictionary<Item, Item[]>[] arItemMappings =
+    private Dictionary<Item, List<Item>>[] arItemMappings =
     [
-        new Dictionary<Item, Item[]>(), // ROUGH
-        new Dictionary<Item, Item[]>(), // COARSE
-        new Dictionary<Item, Item[]>(), // ONETOONE
-        new Dictionary<Item, Item[]>(), // FINE
-        new Dictionary<Item, Item[]>()  // VERYFINE
+        new Dictionary<Item, List<Item>>(), // ROUGH
+        new Dictionary<Item, List<Item>>(), // COARSE
+        new Dictionary<Item, List<Item>>(), // ONETOONE
+        new Dictionary<Item, List<Item>>(), // FINE
+        new Dictionary<Item, List<Item>>()  // VERYFINE
     ];
 
     private int iCurrentState = 0;
     private bool bActive = false; // Server parameter to reject multiple activation at once
-    private GameObject mapPropsContainer = null; // Assigned when necessary
-    private RoundManager roundManager = null;    // ^
+    private Transform ScrapTransform;
+    private RoundManager roundManager;
+    private StartOfRound StartOfRound;
+    private EnemyType MaskedType;
+    private BepInEx.Logging.ManualLogSource mls;
 
-    public void AddConversion(SCP914Setting setting, Item itemInput, Item[] itemOutputs) {
-        int iSetting = (int)setting;
-        arItemMappings[iSetting].Add(itemInput, itemOutputs);
+    private void Awake() {
+        mls = SCPCBDunGen.SCPCBDunGen.Instance.mls;
     }
 
-    private Dictionary<Item, Item[]> GetItemMapping() {
+    public void AddConversion(SCP914Setting setting, Item itemInput, List<Item> lItemOutputs) {
+        int iSetting = (int)setting;
+        Dictionary<Item, List<Item>> dItemMapping = arItemMappings[iSetting];
+        // If dictionary item already exists, concatenate the array
+        if (dItemMapping.TryGetValue(itemInput, out List<Item> lExisting)) {
+            lExisting.AddRange(lItemOutputs);
+        } else {
+            arItemMappings[iSetting].Add(itemInput, lItemOutputs);
+        }
+    }
+
+    private Dictionary<Item, List<Item>> GetItemMapping() {
         return arItemMappings[iCurrentState];
     }
 
@@ -149,7 +163,7 @@ public class SCP914Converter : NetworkBehaviour
         if (bActive) return;
         bActive = true;
         ActivateClientRpc();
-        StartCoroutine(ConvertItem());
+        StartCoroutine(ConversionProcess());
     }
 
     [ClientRpc]
@@ -171,28 +185,33 @@ public class SCP914Converter : NetworkBehaviour
 
     [ClientRpc]
     public void SpawnItemsClientRpc(NetworkObjectReference[] arNetworkObjectReferences, int[] arScrapValues, bool bChargeBattery) {
-        for (int i = 0; i < arNetworkObjectReferences.Length; i++)
+        for (int i = 0; i < arNetworkObjectReferences.Length; i++) {
+            mls.LogInfo($"Item conversion scrap value {i}: {arScrapValues[i]}");
             if (arNetworkObjectReferences[i].TryGet(out NetworkObject networkObject)) {
                 GrabbableObject component = networkObject.GetComponent<GrabbableObject>();
-                if (component.itemProperties.isScrap) component.scrapValue = arScrapValues[i];
-                else component.insertedBattery.charge = bChargeBattery ? 1.0f : 0.0f;
+                if (component.itemProperties.isScrap) component.SetScrapValue(arScrapValues[i]);
+                if (component.itemProperties.requiresBattery) component.insertedBattery.charge = bChargeBattery ? 1.0f : 0.0f;
             }
+        }
     }
 
-    IEnumerator ConvertItem() {
+    IEnumerator ConversionProcess() {
         RefineAudioSrc.Play();
         yield return new WaitForSeconds(7); // Initial wait before collecting item data so doors can close
-        if (mapPropsContainer == null) {
-            mapPropsContainer = GameObject.FindGameObjectWithTag("MapPropsContainer");
-            if (mapPropsContainer == null) {
-                Debug.LogError("SCPCB Failed to find map props container.");
+
+        if (roundManager == null) {
+            mls.LogInfo("Getting round manager");
+            roundManager = FindObjectOfType<RoundManager>();
+            if (roundManager == null) {
+                mls.LogError("Failed to find round manager.");
                 yield break;
             }
         }
-        if (roundManager == null) {
-            roundManager = FindObjectOfType<RoundManager>();
-            if (roundManager == null) {
-                Debug.LogError("SCPCB Failed to find round manager.");
+
+        if (ScrapTransform == null) {
+            ScrapTransform = GameObject.FindGameObjectWithTag("MapPropsContainer")?.transform;
+            if (ScrapTransform == null) {
+                mls.LogError("SCPCB Failed to find props container.");
                 yield break;
             }
         }
@@ -201,48 +220,299 @@ public class SCP914Converter : NetworkBehaviour
         List<int> lScrapValues = new List<int>();
         bool bChargeBatteries = (iCurrentState > 1);
 
-        Dictionary<Item, Item[]> dcCurrentMapping = GetItemMapping();
-        Debug.Log($"SCPCB Contained item count: {InputStore.lContainedItems.Count}");
-        foreach (GameObject item in InputStore.lContainedItems) {
-            GrabbableObject grabbable = item.GetComponent<GrabbableObject>();
-            if (grabbable == null) continue;
-            Vector3 vPosition = GetRandomNavMeshPositionInCollider(colliderOutput);
-            Item[] itemOutputs;
-
-            GameObject gameObjectCreated = null;
-            NetworkObject networkObject = null;
-            Item itemCreated = null;
-            if (dcCurrentMapping.TryGetValue(grabbable.itemProperties, out itemOutputs)) {
-                Item itemOutput = (itemOutputs == null) ? null : itemOutputs[roundManager.AnomalyRandom.Next(itemOutputs.Length)]; // An output may just be null
-                                                                                                                                   // No matter what we destroy the input object
-                Destroy(grabbable.gameObject);
-                if (itemOutput != null) {
-                    Debug.Log("SCPCB Conversion found");
-                    gameObjectCreated = Instantiate(itemOutput.spawnPrefab, vPosition, Quaternion.identity, mapPropsContainer.transform);
-                    networkObject = gameObjectCreated.GetComponent<NetworkObject>();
-                    itemCreated = gameObjectCreated.GetComponent<Item>();
-                }
-            } else {
-                // No conversion mapping found, just create a new item copy
-                gameObjectCreated = Instantiate(grabbable.itemProperties.spawnPrefab, vPosition, Quaternion.identity, mapPropsContainer.transform);
-                Destroy(grabbable.gameObject);
-                networkObject = gameObjectCreated.GetComponent<NetworkObject>();
-                itemCreated = gameObjectCreated.GetComponent<Item>();
+        Dictionary<Item, List<Item>> dcCurrentMapping = GetItemMapping();
+        mls.LogInfo($"Contained item count: {InputStore.lContainedItems.Count}");
+        foreach (GameObject gameObject in InputStore.lContainedItems) {
+            GrabbableObject grabbable = gameObject.GetComponent<GrabbableObject>();
+            // If grabbable item, convert it
+            if (grabbable != null) {
+                ConvertItem(lNetworkObjectReferences, lScrapValues, dcCurrentMapping, grabbable);
+                continue;
             }
-            // Post processing for items created
-            GrabbableObject grabbableCreated = gameObjectCreated.GetComponent<GrabbableObject>();
-            if (itemCreated.isScrap) {
-                // Generate scrap value
-                grabbableCreated.scrapValue = (int)(roundManager.AnomalyRandom.Next(itemCreated.minValue, itemCreated.maxValue) * roundManager.scrapValueMultiplier);
-                lScrapValues.Add(grabbableCreated.scrapValue);
+            // Special case for players
+            PlayerControllerB playerController = gameObject.GetComponent<PlayerControllerB>();
+            if (playerController != null) {
+                ConvertPlayer(playerController);
+                continue;
             }
-            networkObject.Spawn(destroyWithScene: true);
-            lNetworkObjectReferences.Add(networkObject);
+            // TODO enemy conversions
         }
+        mls.LogInfo("Finished spawning scrap, syncing with clients");
         SpawnItemsClientRpc(lNetworkObjectReferences.ToArray(), lScrapValues.ToArray(), bChargeBatteries);
         InputStore.lContainedItems.Clear(); // Empty list for next runthrough
         yield return new WaitForSeconds(7); // 14 seconds (7 * 2) is the duration of the refining SFX (at the part where the bell dings is when we open the doors)
         RefineFinishClientRpc();
         bActive = false;
+    }
+
+    // ** Convert Items
+    private void ConvertItem(List<NetworkObjectReference> lNetworkObjectReferences, List<int> lScrapValues, Dictionary<Item, List<Item>> dcCurrentMapping, GrabbableObject grabbable) {
+        if (grabbable.isHeld) return; // Best not disturb items in players' inventories, TODO implement conversion of held items
+        mls.LogInfo($"Found grabbable item {grabbable.itemProperties.name}");
+        Vector3 vPosition = GetRandomNavMeshPositionInCollider(colliderOutput);
+        List<Item> lItemOutputs;
+
+        GameObject gameObjectCreated = null;
+        NetworkObject networkObject = null;
+        GrabbableObject grabbableObject = null;
+        if (dcCurrentMapping.TryGetValue(grabbable.itemProperties, out lItemOutputs)) {
+            mls.LogInfo("Mapping found");
+            Item itemOutput = (lItemOutputs == null) ? null : lItemOutputs[roundManager.AnomalyRandom.Next(lItemOutputs.Count)];
+            // An output may just be null, no matter what we destroy the input object
+            Destroy(grabbable.gameObject);
+            if (itemOutput != null) {
+                mls.LogInfo("Conversion found");
+                gameObjectCreated = Instantiate(itemOutput.spawnPrefab, vPosition, Quaternion.identity, ScrapTransform);
+                networkObject = gameObjectCreated.GetComponent<NetworkObject>();
+                grabbableObject = gameObjectCreated.GetComponent<GrabbableObject>();
+            }
+        } else {
+            mls.LogInfo("No conversion, making new item with new scrap value");
+            // No conversion mapping found, just create a new item copy
+            gameObjectCreated = Instantiate(grabbable.itemProperties.spawnPrefab, vPosition, Quaternion.identity, ScrapTransform);
+            Destroy(grabbable.gameObject);
+            networkObject = gameObjectCreated.GetComponent<NetworkObject>();
+            grabbableObject = gameObjectCreated.GetComponent<GrabbableObject>();
+        }
+        mls.LogInfo("Preprocessing done");
+        Item itemCreated = grabbableObject.itemProperties;
+
+        // Post processing for items created
+        if (itemCreated.isScrap) {
+            mls.LogInfo("Item is scrap or null, generating a copy with new value");
+            GrabbableObject grabbableCreated = gameObjectCreated.GetComponent<GrabbableObject>();
+            // Generate scrap value
+            int iScrapValue = (int)(roundManager.AnomalyRandom.Next(itemCreated.minValue, itemCreated.maxValue) * roundManager.scrapValueMultiplier);
+            grabbableCreated.SetScrapValue(iScrapValue);
+            mls.LogInfo($"new scrap value: {iScrapValue}");
+            lScrapValues.Add(iScrapValue);
+        } else {
+            mls.LogInfo("Item is not scrap, adding empty scrap value");
+            lScrapValues.Add(0);
+        }
+        networkObject.Spawn(destroyWithScene: true);
+        lNetworkObjectReferences.Add(networkObject);
+    }
+
+    // ** Convert Players (Teleport)
+    [ClientRpc]
+    private void ConvertPlayerTeleportClientRpc(NetworkBehaviourReference netBehaviourRefPlayer, Vector3 vPosition) {
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+        playerController.TeleportPlayer(vPosition);
+    }
+
+    [ClientRpc]
+    private void ConvertPlayerKillClientRpc(NetworkBehaviourReference netBehaviourRefPlayer) {
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+        playerController.KillPlayer(Vector3.zero, causeOfDeath: CauseOfDeath.Mauling);
+    }
+
+    // ** Convert Players (Coarse & Fine, health change)
+    [ClientRpc]
+    private void ConvertPlayerAlterHealthClientRpc(NetworkBehaviourReference netBehaviourRefPlayer, int iHealthDelta) {
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+        playerController.DamagePlayer(iHealthDelta, causeOfDeath: CauseOfDeath.Crushing);
+    }
+
+    // ** Convert Players (1:1, skin change)
+    [ClientRpc]
+    private void ConvertPlayerRandomSkinClientRpc(NetworkBehaviourReference netBehaviourRefPlayer, int iSuitID) {
+        if (StartOfRound == null) {
+            StartOfRound = FindObjectOfType<StartOfRound>();
+            if (StartOfRound == null) {
+                mls.LogError("Failed to find StartOfRound.");
+                return;
+            }
+        }
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+
+        int iIndex = 0;
+        foreach (UnlockableItem unlockable in StartOfRound.unlockablesList.unlockables) {
+            if (unlockable.suitMaterial != null) {
+                mls.LogInfo($"Found suit at index {iIndex}");
+            }
+            iIndex++;
+        }
+
+        // Iterate all suits until we run out of suit IDs
+        UnlockableItem unlockableItem = StartOfRound.unlockablesList.unlockables[iSuitID];
+        if (unlockableItem == null) {
+            mls.LogError($"Invalid suit ID: {iSuitID}");
+            return;
+        }
+        Material material = unlockableItem.suitMaterial;
+        playerController.thisPlayerModel.material = material;
+        playerController.thisPlayerModelLOD1.material = material;
+        playerController.thisPlayerModelLOD2.material = material;
+        playerController.thisPlayerModelArms.material = material;
+        playerController.currentSuitID = iSuitID;
+    }
+
+    private void ConvertPlayerRandomSkin(PlayerControllerB playerController) {
+        if (StartOfRound == null) {
+            StartOfRound = FindObjectOfType<StartOfRound>();
+            if (StartOfRound == null) {
+                mls.LogError("Failed to find StartOfRound.");
+                return;
+            }
+        }
+        List<int> lSuitIDs = new List<int>();
+        int iIndex = 0;
+        foreach (UnlockableItem unlockable in StartOfRound.unlockablesList.unlockables) {
+            // Skip if not a suit or if it's a suit the player already has equipped
+            if ((unlockable.suitMaterial != null) && (iIndex != playerController.currentSuitID)) {
+                lSuitIDs.Add(iIndex);
+            }
+            iIndex++;
+        }
+        int iCount = lSuitIDs.Count;
+        if (iCount == 0) {
+            mls.LogError("No suits to swap to found.");
+            return; // No suits to switch
+        }
+        int iSuitID = roundManager.AnomalyRandom.Next(0, iCount); // Assuming all player have the same suits/suit mods, this should represent the same suit for everyone
+        NetworkBehaviourReference netBehaviourRefPlayer = playerController;
+        ConvertPlayerRandomSkinClientRpc(netBehaviourRefPlayer, lSuitIDs[iSuitID]);
+    }
+
+    // ** Convert Players (Very Fine, masked)
+    private IEnumerator ConvertPlayerMaskedWaitForSpawn(NetworkObjectReference netObjRefMasked, NetworkBehaviourReference netBehaviourRefPlayer) {
+        NetworkObject netObjMasked = null;
+        NetworkBehaviour netBehaviourPlayer = null;
+        float fStartTime = Time.realtimeSinceStartup;
+        yield return new WaitUntil(() => Time.realtimeSinceStartup - fStartTime > 20.0f || netObjRefMasked.TryGet(out netObjMasked));
+        yield return new WaitUntil(() => Time.realtimeSinceStartup - fStartTime > 20.0f || netBehaviourRefPlayer.TryGet(out netBehaviourPlayer));
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+        if (playerController.deadBody == null) {
+            yield return new WaitUntil(() => Time.realtimeSinceStartup - fStartTime > 20.0f || playerController.deadBody != null);
+        }
+        if (playerController.deadBody != null) {
+            playerController.deadBody.DeactivateBody(false);
+            if (netObjMasked != null) {
+                MaskedPlayerEnemy maskedPlayerEnemy = netObjMasked.GetComponent<MaskedPlayerEnemy>();
+                maskedPlayerEnemy.mimickingPlayer = playerController;
+                maskedPlayerEnemy.SetSuit(playerController.currentSuitID);
+                maskedPlayerEnemy.SetEnemyOutside(false);
+                playerController.redirectToEnemy = maskedPlayerEnemy;
+            }
+        }
+    }
+
+    [ClientRpc]
+    private void ConvertPlayerMaskedClientRpc(NetworkObjectReference netObjRefMasked, NetworkBehaviourReference netBehaviourRefPlayer) {
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+        playerController.KillPlayer(Vector3.zero, true, CauseOfDeath.Suffocation);
+        if (playerController.deadBody != null) {
+            playerController.deadBody.DeactivateBody(setActive: false);
+        }
+        StartCoroutine(ConvertPlayerMaskedWaitForSpawn(netObjRefMasked, netBehaviourRefPlayer));
+    }
+
+    private void ConvertPlayerMasked(NetworkBehaviourReference netBehaviourRefPlayer, Vector3 vMaskedPosition) {
+        NetworkBehaviour netBehaviourPlayer = null;
+        netBehaviourRefPlayer.TryGet(out netBehaviourPlayer);
+        if (netBehaviourPlayer == null) {
+            mls.LogError("Failed to get player controller.");
+            return;
+        }
+        PlayerControllerB playerController = (PlayerControllerB)netBehaviourPlayer;
+
+        playerController.KillPlayer(Vector3.zero, true, CauseOfDeath.Suffocation);
+        if (StartOfRound == null) {
+            StartOfRound = FindObjectOfType<StartOfRound>();
+            if (StartOfRound == null) {
+                mls.LogError("Failed to find StartOfRound.");
+                return;
+            }
+        }
+        if (MaskedType == null) {
+            SelectableLevel selectableLevel = Array.Find(StartOfRound.levels, x => x.PlanetName == "8 Titan"); // Pivot off Titan to get masked enemy data
+            if (selectableLevel == null) {
+                mls.LogError("Failed to get Titan level data.");
+                return;
+            }
+            MaskedType = selectableLevel.Enemies.Find(x => x.enemyType.enemyName == "Masked")?.enemyType; // Find masked player enemy
+            if (MaskedType == null) {
+                mls.LogError("Failed to get masked enemy type.");
+                return;
+            }
+        }
+        NetworkObjectReference netObjMasked = roundManager.SpawnEnemyGameObject(vMaskedPosition, 0, -1, MaskedType);
+        if (netObjMasked.TryGet(out var networkObject)) {
+            mls.LogInfo("Got network object for mask enemy");
+            MaskedPlayerEnemy maskedPlayerEnemy = networkObject.GetComponent<MaskedPlayerEnemy>();
+            maskedPlayerEnemy.SetSuit(playerController.currentSuitID);
+            maskedPlayerEnemy.mimickingPlayer = playerController;
+            maskedPlayerEnemy.SetEnemyOutside(false); // 914 is only ever in facility so we can make this assumption
+            playerController.redirectToEnemy = maskedPlayerEnemy;
+            if (playerController.deadBody != null) {
+                playerController.deadBody.DeactivateBody(setActive: false);
+            }
+        }
+        ConvertPlayerMaskedClientRpc(netObjMasked, netBehaviourRefPlayer);
+    }
+
+    // ** Convert Players picker
+    private void ConvertPlayer(PlayerControllerB playerController) {
+        mls.LogInfo("Player detected, doing player conversion");
+        SCP914Setting Setting = (SCP914Setting)iCurrentState;
+        // First, regardless of what we do, teleport player into the output area
+        Vector3 vPlayerPosition = GetRandomNavMeshPositionInCollider(colliderOutput);
+        NetworkBehaviourReference netBehaviourPlayer = playerController;
+        ConvertPlayerTeleportClientRpc(netBehaviourPlayer, vPlayerPosition);
+        switch (Setting) {
+            case SCP914Setting.ROUGH: // Kill player
+                ConvertPlayerKillClientRpc(netBehaviourPlayer);
+                break;
+            case SCP914Setting.COARSE: // Deal 50 damage to player (can kill)
+                ConvertPlayerAlterHealthClientRpc(netBehaviourPlayer, 50);
+                break;
+            case SCP914Setting.ONETOONE: // Change skin of player to a random other one
+                ConvertPlayerRandomSkin(playerController);
+                break;
+            case SCP914Setting.FINE: // Heal player for 50 health
+                ConvertPlayerAlterHealthClientRpc(netBehaviourPlayer, -50);
+                break;
+            case SCP914Setting.VERYFINE: // Convert player to a masked
+                if (!playerController.AllowPlayerDeath()) {
+                    mls.LogInfo("Refined player with Very Fine, but player death is prevented. Doing nothing.");
+                    break;
+                }
+                ConvertPlayerMasked(playerController, vPlayerPosition);
+                break;
+            default:
+                mls.LogError("Invalid SCP 914 setting when attempting to convert player.");
+                break;
+        }
     }
 }
