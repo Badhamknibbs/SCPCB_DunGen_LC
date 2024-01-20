@@ -275,6 +275,11 @@ public class SCP914Converter : NetworkBehaviour
             grabbableObject = gameObjectCreated.GetComponent<GrabbableObject>();
         }
         mls.LogInfo("Preprocessing done");
+        // If the grabbable object is null, return here and don't spawn an output
+        if (grabbableObject == null) {
+            mls.LogInfo("Conversion was null, item is intended to be destroyed in process.");
+            return;
+        }
         Item itemCreated = grabbableObject.itemProperties;
 
         // Post processing for items created

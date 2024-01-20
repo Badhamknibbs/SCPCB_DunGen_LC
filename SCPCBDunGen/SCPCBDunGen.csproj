@@ -2,8 +2,8 @@
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <AssemblyName>SCPCBDunGen</AssemblyName>
-        <Description>A template for Lethal Company</Description>
-        <Version>2.0.0</Version>
+        <Description>Adds the SCP Foundation Dungeon to Lethal Company.</Description>
+        <Version>2.1.0</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
     </PropertyGroup>
