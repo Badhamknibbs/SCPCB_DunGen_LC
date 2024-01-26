@@ -112,7 +112,7 @@ namespace SCPCBDunGen
                 mls.LogInfo("Registering SCP dungeon for predefined moon list.");
                 // First split by comma, then split by @ symbol if present
                 string[] arMoonNames = configMoons.Value.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                StringWithRarity[] arMoonNamesWithRarity = new StringWithRarity[arMoonNames.Length];
+                List<StringWithRarity> lMoonsWithRarity = new List<StringWithRarity>();
                 for (int i = 0; i < arMoonNames.Length; i++) {
                     string[] arMoonNameRarity = arMoonNames[i].Split('@', StringSplitOptions.RemoveEmptyEntries);
                     int iLength = arMoonNameRarity.Length;
@@ -122,7 +122,7 @@ namespace SCPCBDunGen
                     }
                     if (iLength == 1) {
                         mls.LogInfo($"Registering SCP dungeon for moon {arMoonNames[i]} at default rarity {iDefaultRarity}");
-                        arMoonNamesWithRarity[i] = new StringWithRarity(arMoonNames[i], iDefaultRarity);
+                        lMoonsWithRarity.Add(new StringWithRarity(arMoonNames[i], iDefaultRarity));
                     } else { // Length == 2
                         int iRarity;
                         if (!int.TryParse(arMoonNameRarity[1], out iRarity)) {
@@ -130,10 +130,10 @@ namespace SCPCBDunGen
                             continue;
                         }
                         mls.LogInfo($"Registering SCP dungeon for moon {arMoonNames[i]} at default rarity {iDefaultRarity}");
-                        arMoonNamesWithRarity[i] = new StringWithRarity(arMoonNameRarity[0], iRarity);
+                        lMoonsWithRarity.Add(new StringWithRarity(arMoonNameRarity[0], iRarity));
                     }
                 }
-                extendedDungeon.manualPlanetNameReferenceList = arMoonNamesWithRarity.ToList();
+                extendedDungeon.manualPlanetNameReferenceList = lMoonsWithRarity;
             }
             extendedDungeon.dungeonSizeMin = 1.0f;
             extendedDungeon.dungeonSizeMax = 3.0f;

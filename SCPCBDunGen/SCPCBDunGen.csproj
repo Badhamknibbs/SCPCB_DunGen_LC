@@ -3,7 +3,7 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <AssemblyName>SCPCBDunGen</AssemblyName>
         <Description>Adds the SCP Foundation Dungeon to Lethal Company.</Description>
-        <Version>2.1.0</Version>
+        <Version>2.2.0</Version>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>latest</LangVersion>
     </PropertyGroup>
