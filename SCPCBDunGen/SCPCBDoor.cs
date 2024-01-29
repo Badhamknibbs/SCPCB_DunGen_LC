@@ -48,13 +48,16 @@ namespace SCPCBDunGen
         }
 
         private void Update() {
+            // Server only update
+            if (NetworkManager.Singleton == null || !IsServer) return;
+
             if (bDoorOpen) return; // Door is already open, enemies never close doors so exit early
             if (bDoorWaiting) return; // Already in the middle of something
             if (EnemiesInCollider.Count == 0) return; // No enemies, nothing to open the door
 
             SCPCBDunGen.Instance.mls.LogInfo("Enemy attempting to open door...");
 
-            float fLowestMult = float.MaxValue;
+            float fHighestMult = 0.0f;
 
             foreach (EnemyAICollisionDetect enemy in EnemiesInCollider) {
                 EnemyAI enemyAI = enemy.mainScript;
@@ -62,15 +65,19 @@ namespace SCPCBDunGen
 
                 SCPCBDunGen.Instance.mls.LogInfo($"Enemy {enemyAI.enemyType.name} with open mult {enemyAI.openDoorSpeedMultiplier}");
 
-                fLowestMult = Math.Min(fLowestMult, enemyAI.openDoorSpeedMultiplier);
+                float fEnemyDoorOpenSpeed = enemyAI.openDoorSpeedMultiplier;
+                if (enemyAI.enemyType.name == "MaskedPlayerEnemy") fEnemyDoorOpenSpeed = 1.0f; // Force masked enemies to open doors at player speeds despite their 2.0 door opening speed
+                if (enemyAI.enemyType.name == "Crawler") fEnemyDoorOpenSpeed = 2.0f;           // Inversely, make thumpers open doors extremely quickly despite their 0.3 door opening speed
+
+                fHighestMult = Math.Max(fHighestMult, fEnemyDoorOpenSpeed);
             }
 
-            SCPCBDunGen.Instance.mls.LogInfo($"Lowest multiplier is {fLowestMult}.");
+            SCPCBDunGen.Instance.mls.LogInfo($"Highest multiplier is {fHighestMult}.");
 
-            if (fLowestMult != float.MaxValue) {
+            if (fHighestMult != 0.0f) {
                 // Something is at the door that wants to open it
                 SCPCBDunGen.Instance.mls.LogInfo("Door being opened.");
-                if (fLowestMult < 1.0f) {
+                if (fHighestMult > 1.5f) {
                     // This enemy wants the door open fast, use the faster animation
                     OpenDoorFastServerRpc();
                 } else {
@@ -111,12 +118,14 @@ namespace SCPCBDunGen
 
         [ServerRpc(RequireOwnership = false)]
         public void ToggleDoorServerRpc() {
-            string sNewStateLog = bDoorOpen ? "closing" : "opening";
-            SCPCBDunGen.Instance.mls.LogInfo($"Door is {sNewStateLog}.");
             if (bDoorWaiting) return;
+            // If true the door is opening, otherwise it's closing
+            bool bDoorOpening = !bDoorOpen;
+            string sNewStateLog = bDoorOpening ? "opening" : "closing";
+            SCPCBDunGen.Instance.mls.LogInfo($"Door is {sNewStateLog}.");
             bDoorWaiting = true;
-            bDoorOpen = !bDoorOpen; // Flip door state
-            navObstacle.enabled = bDoorOpen;
+            bDoorOpen = bDoorOpening;
+            navObstacle.enabled = !bDoorOpening; // Nav obstacle state should be opposite of what the door state is (opening == disabled, closing == enabled)
             ToggleDoorClientRpc(bDoorOpen);
             StartCoroutine(DoorToggleButtonUsable());
         }
