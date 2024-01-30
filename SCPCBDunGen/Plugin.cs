@@ -4,8 +4,10 @@ using BepInEx.Logging;
 using DunGen;
 using HarmonyLib;
 using LethalLevelLoader;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -13,6 +15,25 @@ using UnityEngine;
 
 namespace SCPCBDunGen
 {
+    // Represents conversions from a given item and what it can become depending on the setting
+    // Used by the dictionary
+    public struct SCP914Conversion
+    {
+        public string ItemName;
+
+        public List<string> RoughResults { get; set; }
+        public List<string> CoarseResults { get; set; }
+        public List<string> OneToOneResults { get; set; }
+        public List<string> FineResults { get; set; }
+        public List<string> VeryFineResults { get; set; }
+    }
+
+    // Keyed collection of SCP 914 conversions
+    public class SCP914ConversionSet:KeyedCollection<string, SCP914Conversion>
+    {
+        protected override string GetKeyForItem(SCP914Conversion conversion) => conversion.ItemName;
+    }
+
     [BepInPlugin(PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_VERSION)]
     [BepInDependency(LethalLib.Plugin.ModGUID)]
     public class SCPCBDunGen : BaseUnityPlugin
@@ -31,6 +52,9 @@ namespace SCPCBDunGen
         private ConfigEntry<string> configMoons;
         private ConfigEntry<bool> configGuaranteedSCP;
         private ConfigEntry<int> configLengthOverride;
+
+        // SCP 914 conversion dictionary (using KeyedCollection for easier json conversion)
+        SCP914ConversionSet SCP914Conversions = new SCP914ConversionSet();
 
         private void Awake() {
             if (Instance == null) {
@@ -140,10 +164,42 @@ namespace SCPCBDunGen
             extendedDungeon.dungeonSizeLerpPercentage = 0.0f;
             AssetBundleLoader.RegisterExtendedDungeonFlow(extendedDungeon);
 
+            // SCP 914 item conversion registry
+            foreach (string sJsonFile in DiscoverConfiguredRecipeFiles()) {
+                StreamReader streamReader = new StreamReader(sJsonFile);
+                string sJsonValue = streamReader.ReadToEnd();
+                try {
+                    List<SCP914Conversion> Conversions = JsonConvert.DeserializeObject<List<SCP914Conversion>>(sJsonValue);
+                    foreach (SCP914Conversion Conversion in Conversions) {
+                        // If the given item already has conversions, add the possible conversions to it
+                        // Using ToLowerInvariant which should help other langauges deal with item names (if they need to)
+                        if (SCP914Conversions.Contains(Conversion.ItemName.ToLowerInvariant())) {
+                            SCP914Conversions[Conversion.ItemName].RoughResults.AddRange(Conversion.RoughResults);
+                            SCP914Conversions[Conversion.ItemName].CoarseResults.AddRange(Conversion.CoarseResults);
+                            SCP914Conversions[Conversion.ItemName].OneToOneResults.AddRange(Conversion.OneToOneResults);
+                            SCP914Conversions[Conversion.ItemName].FineResults.AddRange(Conversion.FineResults);
+                            SCP914Conversions[Conversion.ItemName].VeryFineResults.AddRange(Conversion.VeryFineResults);
+                        } else SCP914Conversions.Add(Conversion);
+                    }
+                    mls.LogInfo($"Registed SCP 914 json file successfully: {sJsonFile}");
+                } catch (JsonException exception) {
+                    mls.LogError($"Failed to deserialize file: {sJsonFile}. Exception: {exception.Message}");
+                }
+            }
+
             harmony.PatchAll(typeof(SCPCBDunGen));
             harmony.PatchAll(typeof(RoundManagerPatch));
 
             mls.LogInfo($"SCP:CB DunGen for Lethal Company [Version {PluginInfo.PLUGIN_VERSION}] successfully loaded.");
+        }
+
+        // Thanks to Lordfirespeed for this json file path getter function
+        IEnumerable<string> DiscoverConfiguredRecipeFiles() {
+            return Directory.GetDirectories(Paths.PluginPath) // get plugin directories
+                .Select(pluginDirectory => Path.Join(pluginDirectory, "badhamknibbs-scp914-recipes")) // map to path of special dir
+                .Where(Directory.Exists) // filter out files and paths that don't exist
+                .SelectMany(Directory.GetFiles) // select the files inside those directories and flatten
+                .Where(filePath => Path.GetExtension(filePath) == ".json"); // filter out files without the '.json' extension
         }
 
         [HarmonyPatch(typeof(RoundManager))]
@@ -203,12 +259,12 @@ namespace SCPCBDunGen
 
             // Add conversions for a specified item to possible results
             // Use "*" to destroy an item, or "@" to do no conversion (same item as input)
-            public static void AddConversions(SCP914Converter SCP914, List<Item> lItems, string sItem, string[] arROUGH, string[] arCOARSE, string[] arONETOONE, string[] arFINE, string[] arVERYFINE) {
+            public static void AddConversions(SCP914Converter SCP914, List<Item> lItems, string sItem, IEnumerable<string> arROUGH, IEnumerable<string> arCOARSE, IEnumerable<string> arONETOONE, IEnumerable<string> arFINE, IEnumerable<string> arVERYFINE) {
 
                 // Array to reference arrays via type index
-                string[][] arSettingToItems = [arROUGH, arCOARSE, arONETOONE, arFINE, arVERYFINE];
+                IEnumerable<string>[] arSettingToItems = [arROUGH, arCOARSE, arONETOONE, arFINE, arVERYFINE];
 
-                Item itemConvert = lItems.Find(x => x.itemName.ToLower() == sItem); // Item we want to add conversions for
+                Item itemConvert = lItems.Find(x => x.itemName.ToLowerInvariant() == sItem); // Item we want to add conversions for
                 if (itemConvert == null) {
                     Instance.mls.LogError($"Failed to find item for conversion \"{sItem}\", skipping.");
                     return;
@@ -218,7 +274,7 @@ namespace SCPCBDunGen
                     foreach (string sItemName in arSettingToItems[(int)scp914Setting]) {
                         if (sItemName == "*") lConvertItems.Add(null);
                         else if (sItemName == "@") lConvertItems.Add(itemConvert);
-                        else lConvertItems.Add(lItems.Find(x => x.itemName.ToLower() == sItemName)); // OK to be null
+                        else lConvertItems.Add(lItems.Find(x => x.itemName.ToLowerInvariant() == sItemName)); // OK to be null
                     }
                     SCP914.AddConversion(scp914Setting, itemConvert, lConvertItems); // Add to conversion dictionary
                 }
@@ -242,41 +298,17 @@ namespace SCPCBDunGen
                 List<Item> lItems = StartOfRound.allItemsList?.itemsList;
                 if (lItems == null) {
                     Instance.mls.LogError("Failed to get item list from StartOfRound.");
+                    return;
                 }
                 if (lItems.Count == 0) {
                     Instance.mls.LogError("Item list was empty from StartOfRound.");
+                    return;
                 }
 
-                // Default conversions
-                AddConversions(SCP914, lItems, "walkie-talkie", ["*"], ["@"], ["@", "old phone"], ["@", "boombox"], ["boombox"]);
-                AddConversions(SCP914, lItems, "old phone", ["*"], ["@"], ["walkie-talkie", "@"], ["@", "boombox"], ["boombox"]);
-                AddConversions(SCP914, lItems, "shovel", ["*"], ["*"], ["@"], ["stop sign", "yield sign"], ["*"]);
-                AddConversions(SCP914, lItems, "laser pointer", ["*"], ["*"], ["@"], ["flashlight", "@"], ["*", "homemade flashbang", "flashlight"]);
-                AddConversions(SCP914, lItems, "flashlight", ["*"], ["laser pointer", "@"], ["@"], ["pro-flashlight", "@"], ["*", "fancy lamp", "stun grenade"]);
-                AddConversions(SCP914, lItems, "pro-flashlight", ["laser pointer"], ["flashlight", "@"], ["@"], ["stun grenade", "fancy lamp", "*"], ["*", "fancy lamp"]);
-                AddConversions(SCP914, lItems, "key", ["*"], ["*"], ["@"], ["lockpicker"], ["lockpicker"]);
-                AddConversions(SCP914, lItems, "homemade flashbang", ["*"], ["*"], ["@"], ["stun grenade"], ["stun grenade"]);
-                AddConversions(SCP914, lItems, "tragedy", ["*"], ["comedy", "@"], ["comedy"], ["comedy", "@"], ["@"]);   // TODO spawn mimic on VF
-                AddConversions(SCP914, lItems, "comedy", ["*"], ["@", "tragedy"], ["tragedy"], ["@", "tragedy"], ["@"]); // Ditto
-                AddConversions(SCP914, lItems, "toy robot", ["metal sheet"], ["v-type engine"], ["@"], ["@"], ["@"]);
-                AddConversions(SCP914, lItems, "v-type engine", ["metal sheet"], ["big bolt", "large axle"], ["@"], ["lockpicker", "toy robot"], ["toy robot", "toy robot", "*", "jetpack"]);
-                AddConversions(SCP914, lItems, "large axle", ["metal sheet"], ["big bolt"], ["@"], ["v-type engine", "lockpicker"], ["lockpicker", "lockpicker", "toy robot", "*"]);
-                AddConversions(SCP914, lItems, "big bolt", ["*"], ["metal sheet"], ["@"], ["large axle"], ["v-type engine", "lockpicker"]);
-                AddConversions(SCP914, lItems, "metal sheet", ["*"], ["*"], ["@"], ["big bolt"], ["large axle", "lockpicker"]);
-                AddConversions(SCP914, lItems, "airhorn", ["*"], ["clown horn"], ["@", "clown horn"], ["@", "bell"], ["bell"]);
-                AddConversions(SCP914, lItems, "clown horn", ["*"], ["*"], ["airhorn", "@"], ["airhorn"], ["bell"]);
-                AddConversions(SCP914, lItems, "bell", ["clown horn"], ["airhorn"], ["@"], ["@"], ["@"]);
-                AddConversions(SCP914, lItems, "candy", ["*"], ["*"], ["@"], ["toothpaste"], ["toothpaste"]);
-                AddConversions(SCP914, lItems, "teeth", ["candy"], ["toothpaste"], ["@"], ["teeth"], ["teeth"]);
-                AddConversions(SCP914, lItems, "toothpaste", ["*"], ["candy"], ["@"], ["teeth"], ["teeth"]);
-                AddConversions(SCP914, lItems, "pill bottle", ["*"], ["*"], ["@"], ["perfume bottle", "chemical jug"], ["chemical jug"]);
-                AddConversions(SCP914, lItems, "perfume bottle", ["*"], ["pill bottle"], ["@"], ["chemical jug"], ["hair dryer", "brush"]);
-                AddConversions(SCP914, lItems, "brush", ["*"], ["pill bottle"], ["@"], ["hair dryer"], ["hair dryer"]);
-                AddConversions(SCP914, lItems, "chemical jug", ["red soda"], ["perfume bottle", "pill bottle"], ["@"], ["jar of pickles"], ["jar of pickles"]);
-                AddConversions(SCP914, lItems, "red soda", ["*"], ["*", "pill bottle"], ["@"], ["jar of pickles"], ["chemical jug", "golden cup"]);
-                AddConversions(SCP914, lItems, "golden cup", ["dust pan", "flask"], ["mug", "pill bottle", "red soda"], ["@"], ["magnifying glass"], ["magnifying glass"]);
-                AddConversions(SCP914, lItems, "flask", ["*"], ["mug", "pill bottle", "red soda"], ["@"], ["magnifying glass"], ["golden cup"]);
-                return;
+                // Add conversions
+                foreach (var conversion in Instance.SCP914Conversions) {
+                    AddConversions(SCP914, lItems, conversion.ItemName, conversion.RoughResults, conversion.CoarseResults, conversion.OneToOneResults, conversion.FineResults, conversion.VeryFineResults);
+                }
             }
         }
     }
