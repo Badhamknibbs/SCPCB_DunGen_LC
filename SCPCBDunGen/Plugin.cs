@@ -52,6 +52,7 @@ namespace SCPCBDunGen
         private ConfigEntry<string> configMoons;
         private ConfigEntry<bool> configGuaranteedSCP;
         private ConfigEntry<int> configLengthOverride;
+        private ConfigEntry<bool> configDefault914;
 
         // SCP 914 conversion dictionary (using KeyedCollection for easier json conversion)
         SCP914ConversionSet SCP914Conversions = new SCP914ConversionSet();
@@ -61,6 +62,7 @@ namespace SCPCBDunGen
                 Instance = this;
             }
 
+            // Netcode patcher magic
             var types = Assembly.GetExecutingAssembly().GetTypes();
             foreach (var type in types) {
                 var methods = type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
@@ -89,11 +91,12 @@ namespace SCPCBDunGen
             }
 
             // Config setup
-            configSCPRarity = Config.Bind("General", "FoundationRarity", 100, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation. Vanillas' main dungeons use a value of 300. Google Weighted Random if you don't know how it works, as that's how Lethal Company rarities function."));
+            configSCPRarity = Config.Bind("General", "FoundationRarity", 150, new ConfigDescription("How rare it is for the foundation to be chosen. Higher values increases the chance of spawning the foundation. Vanillas' main dungeons use a value of 300. Google Weighted Random if you don't know how it works, as that's how Lethal Company rarities function."));
             configMoonsOld = Config.Bind("General", "FoundationMoons", "NULL", new ConfigDescription("OLD CONFIG SETTING, HAS NO EFFECT. Only here to clear the legacy config from updating."));
-            configMoons = Config.Bind("General", "FoundationMoonsList", "Titan,Secret Labs", new ConfigDescription("The moon(s) that the foundation can spawn on, in the form of a comma separated list of selectable level names and optionally a weight value by using an '@' and weight value after it (e.g. \"Titan@300,Dine,Rend@10,Secret Labs@9999\")\nThe name matching is lenient and should pick it up if you use the terminal name or internal mod name. If no rarity is specified, the FoundationRarity parameter is used.\nThe following strings: \"all\", \"vanilla\", \"modded\", \"paid\", \"free\" are dynamic presets which add the dungeon to that specified group (string must only contain one of these, or a manual moon name list).\n"));
+            configMoons = Config.Bind("General", "FoundationMoonsList", "Titan,Secret Labs@99999", new ConfigDescription("The moon(s) that the foundation can spawn on, in the form of a comma separated list of selectable level names and optionally a weight value by using an '@' and weight value after it (e.g. \"Titan@300,Dine,Rend@10,Secret Labs@9999\")\nThe name matching is lenient and should pick it up if you use the terminal name or internal mod name. If no rarity is specified, the FoundationRarity parameter is used.\nThe following strings: \"all\", \"vanilla\", \"modded\", \"paid\", \"free\" are dynamic presets which add the dungeon to that specified group (string must only contain one of these, or a manual moon name list).\n"));
             configGuaranteedSCP = Config.Bind("General", "FoundationGuaranteed", false, new ConfigDescription("OLD CONFIG SETTING, HAS NO EFFECT. Only here to clear the legacy config from updating.\nIf you want to effectively guarantee the foundation, use a weight of something like '99999'"));
             configLengthOverride = Config.Bind("General", "FoundationLengthOverride", -1, new ConfigDescription($"If not -1, overrides the foundation length to whatever you'd like. Adjusts how long/large the dungeon generates.\nBe *EXTREMELY* careful not to set this too high (anything too big on a moon with a high dungeon size multipier can cause catastrophic problems, like crashing your computer or worse)\nFor reference, the default value for the current version [{PluginInfo.PLUGIN_VERSION}] is {SCPFlow.Length.Min}. If it's too big, make this lower e.g. 6, if it's too small use something like 10 (or higher, but don't go too crazy with it)."));
+            configDefault914 = Config.Bind("General", "Default914Recipes", true, new ConfigDescription("If false, any custom 914 Json files named \"default.json\" will be ignored (i.e. the default 914 config will not be loaded).\nSome custom 914 implementations may want to fully override the default settings, in which case this can be set to false."));
 
             if (configMoonsOld.Value != "NULL") {
                 mls.LogWarning("Old config parameters detected for old moon setting; config has changed since 1.3.1, check the config and set FoundationMoons to NULL to suppress this warning (and change FoundationMoonsList if you want)");
@@ -110,21 +113,22 @@ namespace SCPCBDunGen
 
             ExtendedDungeonFlow extendedDungeon = ScriptableObject.CreateInstance<ExtendedDungeonFlow>();
             extendedDungeon.contentSourceName = "SCP Foundation Dungeon";
+            extendedDungeon.dungeonDisplayName = "SCP Foundation";
             extendedDungeon.dungeonFlow = SCPFlow;
-            extendedDungeon.dungeonFirstTimeAudio = SCPCBAssets.LoadAsset<AudioClip>("assets/Mods/SCP/snd/Horror8.ogg");
+            extendedDungeon.dungeonFirstTimeAudio = SCPCBAssets.LoadAsset<AudioClip>("assets/Mods/SCP/snd/SCPHorror8.ogg");
             extendedDungeon.dungeonDefaultRarity = 0;
 
             int iDefaultRarity = configGuaranteedSCP.Value ? 99999 : configSCPRarity.Value; // If configGuaranteedSCP is true, set rarity absurdly high
             string sMoonConfig = configMoons.Value.ToLower();
             if (sMoonConfig == "all") {
-                extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Lethal Company", iDefaultRarity));
-                extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Custom", iDefaultRarity));
+                extendedDungeon.dynamicLevelTagsList.Add(new StringWithRarity("Vanilla", iDefaultRarity));
+                extendedDungeon.dynamicLevelTagsList.Add(new StringWithRarity("Custom", iDefaultRarity));
                 mls.LogInfo("Registered SCP dungeon for all moons.");
             } else if (sMoonConfig == "vanilla") {
-                extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Lethal Company", iDefaultRarity));
+                extendedDungeon.dynamicLevelTagsList.Add(new StringWithRarity("Vanilla", iDefaultRarity));
                 mls.LogInfo("Registered SCP dungeon for all vanilla moons.");
             } else if (sMoonConfig == "modded") {
-                extendedDungeon.manualContentSourceNameReferenceList.Add(new StringWithRarity("Custom", iDefaultRarity));
+                extendedDungeon.dynamicLevelTagsList.Add(new StringWithRarity("Custom", iDefaultRarity));
                 mls.LogInfo("Registered SCP dungeon for all modded moons.");
             } else if (sMoonConfig == "paid") {
                 extendedDungeon.dynamicRoutePricesList.Add(new Vector2WithRarity(new Vector2(1, 9999), iDefaultRarity));
@@ -153,19 +157,20 @@ namespace SCPCBDunGen
                             mls.LogError($"Failed to parse rarity value for moon {arMoonNameRarity[0]}: {arMoonNameRarity[1]}. Skipping.");
                             continue;
                         }
-                        mls.LogInfo($"Registering SCP dungeon for moon {arMoonNames[i]} at default rarity {iDefaultRarity}");
+                        mls.LogInfo($"Registering SCP dungeon for moon {arMoonNameRarity[0]} at rarity {iRarity}");
                         lMoonsWithRarity.Add(new StringWithRarity(arMoonNameRarity[0], iRarity));
                     }
                 }
                 extendedDungeon.manualPlanetNameReferenceList = lMoonsWithRarity;
             }
-            extendedDungeon.dungeonSizeMin = 1.0f;
+            extendedDungeon.dungeonSizeMin = 1.5f;
             extendedDungeon.dungeonSizeMax = 3.0f;
             extendedDungeon.dungeonSizeLerpPercentage = 0.0f;
             AssetBundleLoader.RegisterExtendedDungeonFlow(extendedDungeon);
 
             // SCP 914 item conversion registry
             foreach (string sJsonFile in DiscoverConfiguredRecipeFiles()) {
+                if (!configDefault914.Value && (Path.GetFileName(sJsonFile) == "default.json")) continue; // Skip any files named "default.json" if the config is set to false
                 StreamReader streamReader = new StreamReader(sJsonFile);
                 string sJsonValue = streamReader.ReadToEnd();
                 try {
@@ -217,13 +222,13 @@ namespace SCPCBDunGen
                     return true;
                 }
 
-                Item bottleItem = startOfRound.allItemsList.itemsList.Find(x => x.itemName == "Bottles");
+                Item bottleItem = startOfRound.allItemsList.itemsList.Find(x => x.name == "BottleBin");
                 if (bottleItem == null) {
                     Instance.mls.LogError("Failed to find bottle bin item for reference snatching; scrap spawn may be significantly lower than expected.");
                     return true;
                 }
                 // Grab the small item group from the fancy glass (only appears on paid moons, so this one is optional and replaced with tabletop items if invalid)
-                Item fancyGlassItem = startOfRound.allItemsList.itemsList.Find(x => x.itemName == "Golden cup");
+                Item fancyGlassItem = startOfRound.allItemsList.itemsList.Find(x => x.name == "FancyCup");
 
                 int iGeneralScrapCount = 0;
                 int iTabletopScrapCount = 0;
@@ -236,15 +241,15 @@ namespace SCPCBDunGen
                 RandomScrapSpawn[] scrapSpawns = FindObjectsOfType<RandomScrapSpawn>();
                 foreach (RandomScrapSpawn scrapSpawn in scrapSpawns) {
                     switch (scrapSpawn.spawnableItems.name) {
-                        case "GeneralItemClassDUMMY":
+                        case "GeneralItemClass":
                             scrapSpawn.spawnableItems = itemGroupGeneral;
                             iGeneralScrapCount++;
                             break;
-                        case "TabletopItemsDUMMY":
+                        case "TabletopItems":
                             scrapSpawn.spawnableItems = itemGroupTabletop;
                             iTabletopScrapCount++;
                             break;
-                        case "SmallItemsDUMMY":
+                        case "SmallItems":
                             scrapSpawn.spawnableItems = itemGroupSmall;
                             iSmallScrapCount++;
                             break;
